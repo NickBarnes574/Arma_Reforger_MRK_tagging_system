@@ -1,28 +1,20 @@
-[ComponentEditorProps(
-	category: "Tagging System",
-	description: "Handles client-side tagging input"
-)]
-class MRK_TagComponentClass : ScriptComponentClass
-{
-}
-
-class MRK_TagComponent : ScriptComponent
+class MRK_TagManager
 {
 	protected ref array<ref MRK_TaggedTarget> m_TaggedTargets =
 		new array<ref MRK_TaggedTarget>();
 	
 	protected Widget m_BinocularReticleRoot;
 	protected ImageWidget m_BinocularReticleImage;
+	protected ImageWidget m_BinocularReticleProgress;
+	
 	protected IEntity m_CurrentAcquisitionTarget;
 	protected float m_AcquisitionTime;
 
-	override void OnPostInit(IEntity owner)
+	void Init()
 	{
 		InputManager inputManager;
 
-		super.OnPostInit(owner);
-
-		Print("MRK: Enemy Tag Component initialized");
+		Print("MRK: Tagging system initialized");
 
 		inputManager = GetGame().GetInputManager();
 
@@ -31,12 +23,6 @@ class MRK_TagComponent : ScriptComponent
 			Print("MRK ERROR: No InputManager found");
 			return;
 		}
-
-		inputManager.AddActionListener(
-			"MRK_TagTarget",
-			EActionTrigger.DOWN,
-			TagTarget
-		);
 		
 		CreateBinocularReticle();
 		
@@ -150,18 +136,20 @@ class MRK_TagComponent : ScriptComponent
 			return null;
 		}
 
-		return trace.TraceEnt;
+		return MRK_TargetClassifier.ResolveTaggableEntity(trace.TraceEnt);
 	}
 	
 	protected void CreateBinocularReticle()
 	{
 		ResourceName reticleResource;
+		ResourceName progressImageResource;
+		ResourceName progressMaskResource;
 
-		Print("MRK RETICLE: Creating layout");
-
-		m_BinocularReticleRoot = GetGame().GetWorkspace().CreateWidgets(
-			MRK_BINOCULAR_RETICLE_UID + "UI/layouts/MRK_BinocularReticle.layout"
-		);
+		m_BinocularReticleRoot =
+			GetGame().GetWorkspace().CreateWidgets(
+				MRK_BINOCULAR_RETICLE_UID +
+					"UI/layouts/MRK_BinocularReticle.layout"
+			);
 
 		if (!m_BinocularReticleRoot)
 		{
@@ -169,35 +157,39 @@ class MRK_TagComponent : ScriptComponent
 			return;
 		}
 
-		Print("MRK RETICLE: Layout created");
-		
-		DebugWidgetTree(m_BinocularReticleRoot);
-
 		m_BinocularReticleImage = ImageWidget.Cast(
-			m_BinocularReticleRoot.GetChildren()
+			m_BinocularReticleRoot.FindAnyWidget(
+				"ReticleImage"
+			)
 		);
 
 		if (!m_BinocularReticleImage)
 		{
-			Print("MRK RETICLE ERROR: Could not cast child to ImageWidget");
+			Print("MRK RETICLE ERROR: ReticleImage not found");
+
+			m_BinocularReticleRoot.RemoveFromHierarchy();
+			m_BinocularReticleRoot = null;
+
 			return;
 		}
 
-		Print("MRK RETICLE: ReticleImage acquired from child");
-		
-		// DEBUG START
-		Widget child;
+		m_BinocularReticleProgress = ImageWidget.Cast(
+			m_BinocularReticleRoot.FindAnyWidget(
+				"ReticleProgress"
+			)
+		);
 
-		child = m_BinocularReticleRoot.GetChildren();
-
-		if (child)
+		if (!m_BinocularReticleProgress)
 		{
-			PrintFormat(
-				"MRK RETICLE DEBUG: Child name=%1",
-				child.GetName()
-			);
+			Print("MRK RETICLE ERROR: ReticleProgress not found");
+
+			m_BinocularReticleRoot.RemoveFromHierarchy();
+
+			m_BinocularReticleRoot = null;
+			m_BinocularReticleImage = null;
+
+			return;
 		}
-		// DEBUG END
 
 		reticleResource =
 			"{7C780B2721C26EC0}UI/Textures/Editor/EditableEntities/Objectives/EditableEntity_Objective_Move.edds";
@@ -212,52 +204,87 @@ class MRK_TagComponent : ScriptComponent
 				reticleResource
 			);
 
+			m_BinocularReticleRoot.RemoveFromHierarchy();
+
+			m_BinocularReticleRoot = null;
+			m_BinocularReticleImage = null;
+			m_BinocularReticleProgress = null;
+
 			return;
 		}
-
-		Print("MRK RETICLE: Texture loaded");
 
 		m_BinocularReticleImage.SetImage(0);
 
-		m_BinocularReticleRoot.SetVisible(false);
+		/*
+		* Visible progress artwork.
+		*/
+		progressImageResource =
+			"{8A8ACADB697F8EBB}UI/Textures/RadialMenu/RadialItemForeground.edds";
 
-		Print("MRK RETICLE: Setup complete");
-	}
-	
-	protected void DebugWidgetTree(Widget widget, int depth = 0)
-	{
-		Widget child;
-		string prefix;
+		/*
+		* Mask that controls how much of the progress
+		* artwork is revealed.
+		*/
+		progressMaskResource =
+			"{66618B26E3D5DBA7}UI/Textures/ProgressMasks/ProgressMaskCircular.edds";
 
-		if (!widget)
+		if (!m_BinocularReticleProgress.LoadImageTexture(
+			0,
+			progressImageResource
+		))
 		{
+			PrintFormat(
+				"MRK RETICLE ERROR: Progress image failed to load: %1",
+				progressImageResource
+			);
+
+			m_BinocularReticleRoot.RemoveFromHierarchy();
+
+			m_BinocularReticleRoot = null;
+			m_BinocularReticleImage = null;
+			m_BinocularReticleProgress = null;
+
 			return;
 		}
 
-		prefix = "";
+		m_BinocularReticleProgress.SetImage(0);
 
-		for (int i = 0; i < depth; i++)
+		if (!m_BinocularReticleProgress.LoadMaskTexture(
+			progressMaskResource
+		))
 		{
-			prefix = prefix + "  ";
-		}
-
-		PrintFormat(
-			"MRK UI DEBUG: %1Widget='%2'",
-			prefix,
-			widget.GetName()
-		);
-
-		child = widget.GetChildren();
-
-		while (child)
-		{
-			DebugWidgetTree(
-				child,
-				depth + 1
+			PrintFormat(
+				"MRK RETICLE ERROR: Progress mask failed to load: %1",
+				progressMaskResource
 			);
 
-			child = child.GetSibling();
+			m_BinocularReticleRoot.RemoveFromHierarchy();
+
+			m_BinocularReticleRoot = null;
+			m_BinocularReticleImage = null;
+			m_BinocularReticleProgress = null;
+
+			return;
 		}
+		
+		m_BinocularReticleRoot.SetZOrder(1000);
+
+		/*
+		* Start with an empty circular progress indicator.
+		*/
+		m_BinocularReticleProgress.SetMaskProgress(0.0);
+
+		/*
+		* Hide progress until we're actually acquiring
+		* a valid target.
+		*/
+		m_BinocularReticleProgress.SetVisible(false);
+
+		/*
+		* Entire binocular HUD starts hidden until
+		* binoculars are raised.
+		*/
+		m_BinocularReticleRoot.SetVisible(false);
 	}
 
 	protected void UpdateBinocularReticle()
@@ -275,11 +302,16 @@ class MRK_TagComponent : ScriptComponent
 			return;
 		}
 
+		if (!m_BinocularReticleProgress)
+		{
+			return;
+		}
+
 		if (!IsUsingBinoculars())
 		{
 			m_BinocularReticleRoot.SetVisible(false);
 
-			ResetTargetAcquisition();
+			ResetReticleProgress();
 
 			return;
 		}
@@ -297,7 +329,7 @@ class MRK_TagComponent : ScriptComponent
 				Color.FromRGBA(255, 255, 255, 255)
 			);
 
-			ResetTargetAcquisition();
+			ResetReticleProgress();
 
 			return;
 		}
@@ -311,7 +343,7 @@ class MRK_TagComponent : ScriptComponent
 				Color.FromRGBA(180, 180, 180, 255)
 			);
 
-			ResetTargetAcquisition();
+			ResetReticleProgress();
 
 			return;
 		}
@@ -320,49 +352,69 @@ class MRK_TagComponent : ScriptComponent
 		* Valid new target.
 		*/
 		m_BinocularReticleImage.SetColor(
-			Color.FromRGBA(0, 255, 0, 255)
+			Color.FromRGBA(226, 167, 79, 255)
+		);
+		
+		m_BinocularReticleProgress.SetColor(
+			Color.FromRGBA(226, 167, 79, 255)
 		);
 
 		/*
-		* We just moved onto a new target.
-		*
-		* Start its acquisition timer from zero.
+		* New acquisition target.
 		*/
 		if (target != m_CurrentAcquisitionTarget)
 		{
 			m_CurrentAcquisitionTarget = target;
 			m_AcquisitionTime = 0.0;
 
+			m_BinocularReticleProgress.SetVisible(true);
+
 			return;
 		}
 
 		/*
-		* Still looking at the same target.
-		*
-		* Convert the update interval from milliseconds
-		* to seconds.
+		* Still acquiring the same target.
 		*/
+		m_BinocularReticleProgress.SetVisible(true);
+
 		deltaTime =
 			MRK_BINOCULAR_RETICLE_UPDATE_MS / 1000.0;
 
 		m_AcquisitionTime =
 			m_AcquisitionTime + deltaTime;
+		
+		float progress;
 
-		PrintFormat(
-			"MRK ACQUIRE: %1 / %2",
-			m_AcquisitionTime,
-			MRK_TAG_ACQUISITION_TIME
+		progress =
+			m_AcquisitionTime /
+			MRK_TAG_ACQUISITION_TIME;
+
+		if (progress > 1.0)
+		{
+			progress = 1.0;
+		}
+
+		m_BinocularReticleProgress.SetMaskProgress(
+			progress
 		);
 
-		/*
-		* Acquisition complete.
-		*/
 		if (m_AcquisitionTime >= MRK_TAG_ACQUISITION_TIME)
 		{
 			TagEntity(target);
 
-			ResetTargetAcquisition();
+			ResetReticleProgress();
 		}
+	}
+
+	protected void ResetReticleProgress()
+	{
+		if (m_BinocularReticleProgress)
+		{
+			m_BinocularReticleProgress.SetMaskProgress(0.0);
+			m_BinocularReticleProgress.SetVisible(false);
+		}
+
+		ResetTargetAcquisition();
 	}
 	
 	protected void ResetTargetAcquisition()

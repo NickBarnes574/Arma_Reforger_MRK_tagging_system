@@ -158,4 +158,40 @@ class MRK_TargetClassifier
 
 		return markerHeight;
 	}
+	
+	static IEntity ResolveTaggableEntity(IEntity target)
+	{
+		IEntity currentEntity;
+		IEntity parentEntity;
+		MRK_TagType tagType;
+
+		if (!target)
+		{
+			return null;
+		}
+
+		currentEntity = target;
+
+		while (currentEntity)
+		{
+			tagType = ClassifyTarget(currentEntity);
+
+			if (tagType != MRK_TagType.MRK_TAG_UNKNOWN)
+			{
+				return currentEntity;
+			}
+
+			parentEntity = currentEntity.GetParent();
+
+			if (!parentEntity)
+			{
+				break;
+			}
+
+			currentEntity = parentEntity;
+		}
+
+		return null;
+	}
+	
 }
