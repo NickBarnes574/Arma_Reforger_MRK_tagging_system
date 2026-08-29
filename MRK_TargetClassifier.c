@@ -159,11 +159,82 @@ class MRK_TargetClassifier
 		return markerHeight;
 	}
 	
+	static float GetMarkerHeightForEntity(
+		IEntity target,
+		MRK_TagType tagType
+	)
+	{
+		ChimeraCharacter character;
+		CharacterControllerComponent characterController;
+		ECharacterStance stance;
+
+		/*
+		* Vehicles and other non-infantry types
+		* keep their existing fixed marker height.
+		*/
+		if (
+			tagType !=
+			MRK_TagType.MRK_TAG_INFANTRY
+		)
+		{
+			return GetMarkerHeight(tagType);
+		}
+
+		if (!target)
+		{
+			return GetMarkerHeight(tagType);
+		}
+
+		character =
+			ChimeraCharacter.Cast(target);
+
+		if (!character)
+		{
+			return GetMarkerHeight(tagType);
+		}
+
+		characterController =
+			character.GetCharacterController();
+
+		if (!characterController)
+		{
+			return GetMarkerHeight(tagType);
+		}
+
+		stance =
+			characterController.GetStance();
+
+		switch (stance)
+		{
+			case ECharacterStance.PRONE:
+			{
+				return 0.65;
+			}
+
+			case ECharacterStance.CROUCH:
+			{
+				return 1.35;
+			}
+
+			case ECharacterStance.STAND:
+			{
+				return 2.0;
+			}
+		}
+
+		/*
+		* Enforce Script wants an explicit fallback
+		* return even though we've handled the
+		* expected stance values above.
+		*/
+		return GetMarkerHeight(tagType);
+	}
+
 	static IEntity ResolveTaggableEntity(IEntity target)
 	{
 		IEntity currentEntity;
 		IEntity parentEntity;
-		MRK_TagType tagType;
+		MRK_TagType resolvedTagType;
 
 		if (!target)
 		{
@@ -174,14 +245,19 @@ class MRK_TargetClassifier
 
 		while (currentEntity)
 		{
-			tagType = ClassifyTarget(currentEntity);
+			resolvedTagType =
+				ClassifyTarget(currentEntity);
 
-			if (tagType != MRK_TagType.MRK_TAG_UNKNOWN)
+			if (
+				resolvedTagType !=
+				MRK_TagType.MRK_TAG_UNKNOWN
+			)
 			{
 				return currentEntity;
 			}
 
-			parentEntity = currentEntity.GetParent();
+			parentEntity =
+				currentEntity.GetParent();
 
 			if (!parentEntity)
 			{

@@ -2,30 +2,24 @@ class MRK_TagManager
 {
 	protected ref array<ref MRK_TaggedTarget> m_TaggedTargets =
 		new array<ref MRK_TaggedTarget>();
-	
+
 	protected Widget m_BinocularReticleRoot;
 	protected ImageWidget m_BinocularReticleImage;
 	protected ImageWidget m_BinocularReticleProgress;
-	
+
 	protected IEntity m_CurrentAcquisitionTarget;
 	protected float m_AcquisitionTime;
+	protected float m_AcquisitionLostTime;
+	protected float m_BinocularADSTime;
+	protected bool m_WasWeaponADS;
+	protected float m_ScopeExitTime;
 
 	void Init()
 	{
-		InputManager inputManager;
-
 		Print("MRK: Tagging system initialized");
 
-		inputManager = GetGame().GetInputManager();
-
-		if (!inputManager)
-		{
-			Print("MRK ERROR: No InputManager found");
-			return;
-		}
-		
 		CreateBinocularReticle();
-		
+
 		GetGame().GetCallqueue().CallLater(
 			UpdateBinocularReticle,
 			MRK_BINOCULAR_RETICLE_UPDATE_MS,
@@ -44,7 +38,7 @@ class MRK_TagManager
 			true
 		);
 	}
-	
+
 	protected bool IsTaggableTarget(IEntity target)
 	{
 		MRK_TagType tagType;
@@ -63,30 +57,27 @@ class MRK_TagManager
 
 		return true;
 	}
-	
+
 	protected IEntity GetBinocularTarget()
 	{
-		CameraManager cameraManager;
-		CameraBase currentCamera;
-		BaseWorld world;
 		IEntity player;
-		TraceParam trace;
+		BaseWorld world;
+		CameraBase currentCamera;
+
 		vector cameraTransform[4];
 		vector traceStart;
 		vector traceEnd;
 		vector forward;
+
+		TraceParam trace;
 		float traceResult;
 
-		cameraManager = GetGame().GetCameraManager();
+		player =
+			GetGame()
+				.GetPlayerController()
+				.GetControlledEntity();
 
-		if (!cameraManager)
-		{
-			return null;
-		}
-
-		currentCamera = cameraManager.CurrentCamera();
-
-		if (!currentCamera)
+		if (!player)
 		{
 			return null;
 		}
@@ -98,19 +89,27 @@ class MRK_TagManager
 			return null;
 		}
 
-		player = GetGame().GetPlayerController().GetControlledEntity();
+		currentCamera =
+			GetGame().GetCameraManager().CurrentCamera();
+
+		if (!currentCamera)
+		{
+			return null;
+		}
 
 		currentCamera.GetWorldCameraTransform(
 			cameraTransform
 		);
 
 		traceStart = cameraTransform[3];
-
 		forward = cameraTransform[2];
 
 		traceEnd =
 			traceStart +
-			(forward * MRK_BINOCULAR_TAG_RANGE);
+			(
+				forward *
+				MRK_BINOCULAR_TAG_RANGE
+			);
 
 		trace = new TraceParam();
 
@@ -126,222 +125,254 @@ class MRK_TagManager
 
 		trace.Exclude = player;
 
-		traceResult = world.TraceMove(
-			trace,
-			null
-		);
+		traceResult =
+			world.TraceMove(
+				trace,
+				null
+			);
 
 		if (traceResult >= 1.0)
 		{
 			return null;
 		}
 
-		return MRK_TargetClassifier.ResolveTaggableEntity(trace.TraceEnt);
+		return MRK_TargetClassifier.ResolveTaggableEntity(
+			trace.TraceEnt
+		);
 	}
-	
+
 	protected void CreateBinocularReticle()
 	{
-		ResourceName reticleResource;
-		ResourceName progressImageResource;
-		ResourceName progressMaskResource;
+		WorkspaceWidget workspace;
+
+		workspace = GetGame().GetWorkspace();
+
+		if (!workspace)
+		{
+			return;
+		}
 
 		m_BinocularReticleRoot =
-			GetGame().GetWorkspace().CreateWidgets(
-				MRK_BINOCULAR_RETICLE_UID +
-					"UI/layouts/MRK_BinocularReticle.layout"
+			workspace.CreateWidgets(
+				MRK_BINOCULAR_RETICLE_LAYOUT
 			);
 
 		if (!m_BinocularReticleRoot)
 		{
-			Print("MRK RETICLE ERROR: Layout creation failed");
-			return;
-		}
-
-		m_BinocularReticleImage = ImageWidget.Cast(
-			m_BinocularReticleRoot.FindAnyWidget(
-				"ReticleImage"
-			)
-		);
-
-		if (!m_BinocularReticleImage)
-		{
-			Print("MRK RETICLE ERROR: ReticleImage not found");
-
-			m_BinocularReticleRoot.RemoveFromHierarchy();
-			m_BinocularReticleRoot = null;
-
-			return;
-		}
-
-		m_BinocularReticleProgress = ImageWidget.Cast(
-			m_BinocularReticleRoot.FindAnyWidget(
-				"ReticleProgress"
-			)
-		);
-
-		if (!m_BinocularReticleProgress)
-		{
-			Print("MRK RETICLE ERROR: ReticleProgress not found");
-
-			m_BinocularReticleRoot.RemoveFromHierarchy();
-
-			m_BinocularReticleRoot = null;
-			m_BinocularReticleImage = null;
-
-			return;
-		}
-
-		reticleResource =
-			"{7C780B2721C26EC0}UI/Textures/Editor/EditableEntities/Objectives/EditableEntity_Objective_Move.edds";
-
-		if (!m_BinocularReticleImage.LoadImageTexture(
-			0,
-			reticleResource
-		))
-		{
-			PrintFormat(
-				"MRK RETICLE ERROR: Texture failed to load: %1",
-				reticleResource
+			Print(
+				"MRK: Failed to create binocular reticle"
 			);
 
-			m_BinocularReticleRoot.RemoveFromHierarchy();
-
-			m_BinocularReticleRoot = null;
-			m_BinocularReticleImage = null;
-			m_BinocularReticleProgress = null;
-
 			return;
 		}
-
-		m_BinocularReticleImage.SetImage(0);
 
 		/*
-		* Visible progress artwork.
+		* Keep our custom binocular reticle above
+		* the vanilla binocular overlay.
 		*/
-		progressImageResource =
-			"{8A8ACADB697F8EBB}UI/Textures/RadialMenu/RadialItemForeground.edds";
-
-		/*
-		* Mask that controls how much of the progress
-		* artwork is revealed.
-		*/
-		progressMaskResource =
-			"{66618B26E3D5DBA7}UI/Textures/ProgressMasks/ProgressMaskCircular.edds";
-
-		if (!m_BinocularReticleProgress.LoadImageTexture(
-			0,
-			progressImageResource
-		))
-		{
-			PrintFormat(
-				"MRK RETICLE ERROR: Progress image failed to load: %1",
-				progressImageResource
-			);
-
-			m_BinocularReticleRoot.RemoveFromHierarchy();
-
-			m_BinocularReticleRoot = null;
-			m_BinocularReticleImage = null;
-			m_BinocularReticleProgress = null;
-
-			return;
-		}
-
-		m_BinocularReticleProgress.SetImage(0);
-
-		if (!m_BinocularReticleProgress.LoadMaskTexture(
-			progressMaskResource
-		))
-		{
-			PrintFormat(
-				"MRK RETICLE ERROR: Progress mask failed to load: %1",
-				progressMaskResource
-			);
-
-			m_BinocularReticleRoot.RemoveFromHierarchy();
-
-			m_BinocularReticleRoot = null;
-			m_BinocularReticleImage = null;
-			m_BinocularReticleProgress = null;
-
-			return;
-		}
-		
 		m_BinocularReticleRoot.SetZOrder(1000);
 
-		/*
-		* Start with an empty circular progress indicator.
-		*/
-		m_BinocularReticleProgress.SetMaskProgress(0.0);
+		m_BinocularReticleImage =
+			ImageWidget.Cast(
+				m_BinocularReticleRoot.FindAnyWidget(
+					"ReticleImage"
+				)
+			);
+
+		m_BinocularReticleProgress =
+			ImageWidget.Cast(
+				m_BinocularReticleRoot.FindAnyWidget(
+					"ReticleProgress"
+				)
+			);
 
 		/*
-		* Hide progress until we're actually acquiring
-		* a valid target.
+		* Load the binocular reticle icon.
 		*/
-		m_BinocularReticleProgress.SetVisible(false);
+		if (m_BinocularReticleImage)
+		{
+			m_BinocularReticleImage.LoadImageTexture(
+				0,
+				MRK_BINOCULAR_RETICLE_IMAGE
+			);
+
+			m_BinocularReticleImage.SetImage(0);
+
+			m_BinocularReticleImage.SetColor(
+				Color.FromRGBA(
+					255,
+					255,
+					255,
+					255
+				)
+			);
+		}
 
 		/*
-		* Entire binocular HUD starts hidden until
-		* binoculars are raised.
+		* Load the circular acquisition progress ring
+		* and its mask.
 		*/
-		m_BinocularReticleRoot.SetVisible(false);
+		if (m_BinocularReticleProgress)
+		{
+			m_BinocularReticleProgress.LoadImageTexture(
+				0,
+				MRK_BINOCULAR_PROGRESS_IMAGE
+			);
+
+			m_BinocularReticleProgress.SetImage(0);
+
+			m_BinocularReticleProgress.LoadMaskTexture(
+				MRK_BINOCULAR_PROGRESS_MASK
+			);
+
+			m_BinocularReticleProgress.SetMaskProgress(
+				0.0
+			);
+
+			m_BinocularReticleProgress.SetVisible(
+				false
+			);
+		}
+
+		m_BinocularReticleRoot.SetVisible(
+			false
+		);
+	}
+
+	protected void DestroyBinocularReticle()
+	{
+		if (m_BinocularReticleRoot)
+		{
+			m_BinocularReticleRoot.RemoveFromHierarchy();
+		}
+
+		m_BinocularReticleRoot = null;
+		m_BinocularReticleImage = null;
+		m_BinocularReticleProgress = null;
 	}
 
 	protected void UpdateBinocularReticle()
 	{
 		IEntity target;
 		float deltaTime;
+		float progress;
 
 		if (!m_BinocularReticleRoot)
 		{
 			return;
 		}
 
-		if (!m_BinocularReticleImage)
-		{
-			return;
-		}
+		deltaTime =
+			MRK_BINOCULAR_RETICLE_UPDATE_MS /
+			1000.0;
 
-		if (!m_BinocularReticleProgress)
-		{
-			return;
-		}
-
+		/*
+		* Binoculars not currently raised.
+		*/
 		if (!IsUsingBinoculars())
 		{
-			m_BinocularReticleRoot.SetVisible(false);
+			m_BinocularADSTime = 0.0;
+
+			m_BinocularReticleRoot.SetVisible(
+				false
+			);
 
 			ResetReticleProgress();
 
 			return;
 		}
 
-		m_BinocularReticleRoot.SetVisible(true);
+		/*
+		* Binocular ADS starts before the raising
+		* animation visually finishes.
+		*
+		* Delay our custom reticle slightly.
+		*/
+		m_BinocularADSTime =
+			m_BinocularADSTime +
+			deltaTime;
+
+		if (
+			m_BinocularADSTime <
+			MRK_BINOCULAR_RETICLE_DELAY
+		)
+		{
+			m_BinocularReticleRoot.SetVisible(
+				false
+			);
+
+			return;
+		}
+
+		m_BinocularReticleRoot.SetVisible(
+			true
+		);
 
 		target = GetBinocularTarget();
 
 		/*
-		* Nothing valid under the reticle.
+		* Exact ray missed.
+		*
+		* First see whether the target we were already
+		* acquiring is still close enough to the center
+		* of the screen to remain "sticky".
 		*/
 		if (!IsTaggableTarget(target))
 		{
-			m_BinocularReticleImage.SetColor(
-				Color.FromRGBA(255, 255, 255, 255)
-			);
+			if (IsAcquisitionTargetNearReticle())
+			{
+				target =
+					m_CurrentAcquisitionTarget;
+			}
+			else
+			{
+				/*
+				* Allow a brief miss before actually
+				* throwing away progress.
+				*/
+				if (HandleAcquisitionLoss())
+				{
+					return;
+				}
 
-			ResetReticleProgress();
+				if (m_BinocularReticleImage)
+				{
+					m_BinocularReticleImage.SetColor(
+						Color.FromRGBA(
+							255,
+							255,
+							255,
+							255
+						)
+					);
+				}
 
-			return;
+				return;
+			}
 		}
 
 		/*
-		* Target is already tagged.
+		* We've got a valid target again, so it is no
+		* longer considered "lost".
+		*/
+		m_AcquisitionLostTime = 0.0;
+
+		/*
+		* Already tagged.
 		*/
 		if (IsAlreadyTagged(target))
 		{
-			m_BinocularReticleImage.SetColor(
-				Color.FromRGBA(180, 180, 180, 255)
-			);
+			if (m_BinocularReticleImage)
+			{
+				m_BinocularReticleImage.SetColor(
+					Color.FromRGBA(
+						180,
+						180,
+						180,
+						255
+					)
+				);
+			}
 
 			ResetReticleProgress();
 
@@ -349,25 +380,56 @@ class MRK_TagManager
 		}
 
 		/*
-		* Valid new target.
+		* Valid new target: acquisition color.
 		*/
-		m_BinocularReticleImage.SetColor(
-			Color.FromRGBA(226, 167, 79, 255)
-		);
-		
-		m_BinocularReticleProgress.SetColor(
-			Color.FromRGBA(226, 167, 79, 255)
-		);
+		if (m_BinocularReticleImage)
+		{
+			m_BinocularReticleImage.SetColor(
+				Color.FromRGBA(
+					226,
+					167,
+					79,
+					255
+				)
+			);
+		}
+
+		if (m_BinocularReticleProgress)
+		{
+			m_BinocularReticleProgress.SetColor(
+				Color.FromRGBA(
+					226,
+					167,
+					79,
+					255
+				)
+			);
+		}
 
 		/*
 		* New acquisition target.
 		*/
-		if (target != m_CurrentAcquisitionTarget)
+		if (
+			target !=
+			m_CurrentAcquisitionTarget
+		)
 		{
-			m_CurrentAcquisitionTarget = target;
-			m_AcquisitionTime = 0.0;
+			m_CurrentAcquisitionTarget =
+				target;
 
-			m_BinocularReticleProgress.SetVisible(true);
+			m_AcquisitionTime = 0.0;
+			m_AcquisitionLostTime = 0.0;
+
+			if (m_BinocularReticleProgress)
+			{
+				m_BinocularReticleProgress.SetMaskProgress(
+					0.0
+				);
+
+				m_BinocularReticleProgress.SetVisible(
+					true
+				);
+			}
 
 			return;
 		}
@@ -375,15 +437,9 @@ class MRK_TagManager
 		/*
 		* Still acquiring the same target.
 		*/
-		m_BinocularReticleProgress.SetVisible(true);
-
-		deltaTime =
-			MRK_BINOCULAR_RETICLE_UPDATE_MS / 1000.0;
-
 		m_AcquisitionTime =
-			m_AcquisitionTime + deltaTime;
-		
-		float progress;
+			m_AcquisitionTime +
+			deltaTime;
 
 		progress =
 			m_AcquisitionTime /
@@ -394,14 +450,23 @@ class MRK_TagManager
 			progress = 1.0;
 		}
 
-		m_BinocularReticleProgress.SetMaskProgress(
-			progress
-		);
+		if (m_BinocularReticleProgress)
+		{
+			m_BinocularReticleProgress.SetVisible(
+				true
+			);
 
-		if (m_AcquisitionTime >= MRK_TAG_ACQUISITION_TIME)
+			m_BinocularReticleProgress.SetMaskProgress(
+				progress
+			);
+		}
+
+		if (
+			m_AcquisitionTime >=
+			MRK_TAG_ACQUISITION_TIME
+		)
 		{
 			TagEntity(target);
-
 			ResetReticleProgress();
 		}
 	}
@@ -416,13 +481,14 @@ class MRK_TagManager
 
 		ResetTargetAcquisition();
 	}
-	
+
 	protected void ResetTargetAcquisition()
 	{
 		m_CurrentAcquisitionTarget = null;
 		m_AcquisitionTime = 0.0;
+		m_AcquisitionLostTime =0.0;
 	}
-	
+
 	protected void TagEntity(IEntity target)
 	{
 		MRK_TagType tagType;
@@ -447,16 +513,23 @@ class MRK_TagManager
 			return;
 		}
 
-		if (!MRK_MarkerUIService.CreateMarker(
+		taggedTarget = MRK_MarkerUIService.CreateMarker(
 			target,
-			tagType,
-			taggedTarget
-		))
+			tagType
+		);
+
+		if (!taggedTarget)
 		{
 			return;
 		}
 
 		m_TaggedTargets.Insert(taggedTarget);
+
+		/*
+		 * Play confirmation only after the
+	 	 * tag was successfully created.
+		 */
+		PlayTagSound();
 
 		PrintFormat(
 			"MRK: TARGET TAGGED! Type=%1 Total=%2",
@@ -464,40 +537,99 @@ class MRK_TagManager
 			m_TaggedTargets.Count()
 		);
 	}
-	
-	protected void TagTarget()
-	{
-		IEntity target;
-
-		if (!IsUsingBinoculars())
-		{
-			return;
-		}
-
-		target = GetBinocularTarget();
-
-		if (!target)
-		{
-			return;
-		}
-
-		TagEntity(target);
-	}
 
 	protected void UpdateTaggedMarkers()
 	{
 		MRK_TaggedTarget taggedTarget;
+		SCR_2DPIPSightsComponent pipSights;
+
+		bool weaponADS;
+		bool usePIP;
+
+		float deltaTime;
+
+		int pipCameraIndex;
+
+		/*
+		* Detect transition from ADS -> non-ADS.
+		*/
+		weaponADS = IsWeaponADS();
+
+		deltaTime =
+			MRK_MARKER_UPDATE_MS /
+			1000.0;
+
+		if (
+			m_WasWeaponADS &&
+			!weaponADS
+		)
+		{
+			m_ScopeExitTime =
+				MRK_SCOPE_EXIT_HIDE_TIME;
+		}
+
+		m_WasWeaponADS = weaponADS;
+
+		/*
+		* While the scope is lowering, neither the
+		* PIP camera nor normal camera gives us a
+		* visually stable projection.
+		*
+		* Hide markers until the animation finishes.
+		*/
+		if (m_ScopeExitTime > 0.0)
+		{
+			m_ScopeExitTime =
+				m_ScopeExitTime -
+				deltaTime;
+
+			if (m_ScopeExitTime < 0.0)
+			{
+				m_ScopeExitTime = 0.0;
+			}
+
+			HideAllTaggedMarkers();
+
+			return;
+		}
+
+		/*
+		* Determine whether we're currently using
+		* the PIP scope projection path.
+		*/
+		pipSights = GetActivePIPSights();
+
+		usePIP = false;
+		pipCameraIndex = -1;
+
+		if (pipSights)
+		{
+			pipCameraIndex =
+				pipSights.GetPIPCameraIndex();
+
+			if (pipCameraIndex >= 0)
+			{
+				usePIP = true;
+			}
+		}
 
 		for (int idx = m_TaggedTargets.Count() - 1; idx >= 0; idx--)
 		{
-			taggedTarget = m_TaggedTargets[idx];
+			taggedTarget =
+				m_TaggedTargets[idx];
 
 			if (!taggedTarget)
 			{
-				m_TaggedTargets.RemoveOrdered(idx);
+				m_TaggedTargets.RemoveOrdered(
+					idx
+				);
+
 				continue;
 			}
 
+			/*
+			* Remove dead/destroyed targets.
+			*/
 			if (
 				MRK_TargetStateService.ShouldRemoveTarget(
 					taggedTarget.m_TargetEntity
@@ -508,20 +640,58 @@ class MRK_TagManager
 					taggedTarget
 				);
 
-				m_TaggedTargets.RemoveOrdered(idx);
-
-				Print("MRK: Removed tagged target");
+				m_TaggedTargets.RemoveOrdered(
+					idx
+				);
 
 				continue;
 			}
 
-			if (!MRK_MarkerUIService.UpdatePosition(taggedTarget))
+			/*
+			* PIP weapon optic.
+			*
+			* This should call the working projection
+			* method containing the aiming-rotation
+			* compensation we already established.
+			*/
+			if (usePIP)
+			{
+				if (
+					!MRK_MarkerUIService.UpdatePositionWithCamera(
+						taggedTarget,
+						pipCameraIndex,
+						pipSights
+					)
+				)
+				{
+					MRK_MarkerUIService.DestroyMarker(
+						taggedTarget
+					);
+
+					m_TaggedTargets.RemoveOrdered(
+						idx
+					);
+				}
+
+				continue;
+			}
+
+			/*
+			* Normal camera / binocular projection.
+			*/
+			if (
+				!MRK_MarkerUIService.UpdatePosition(
+					taggedTarget
+				)
+			)
 			{
 				MRK_MarkerUIService.DestroyMarker(
 					taggedTarget
 				);
 
-				m_TaggedTargets.RemoveOrdered(idx);
+				m_TaggedTargets.RemoveOrdered(
+					idx
+				);
 			}
 		}
 	}
@@ -529,8 +699,12 @@ class MRK_TagManager
 	protected void UpdateTaggedAlertStates()
 	{
 		MRK_TaggedTarget taggedTarget;
+		MRK_AlertState alertState;
 
-		foreach (MRK_TaggedTarget currentTarget : m_TaggedTargets)
+		foreach (
+			MRK_TaggedTarget currentTarget :
+			m_TaggedTargets
+		)
 		{
 			taggedTarget = currentTarget;
 
@@ -544,8 +718,37 @@ class MRK_TagManager
 				continue;
 			}
 
+			/*
+			* Friendlies are always blue.
+			*
+			* We intentionally do not ask for their
+			* alert state.
+			*/
+			if (
+				MRK_TargetStateService.IsFriendlyTarget(
+					taggedTarget.m_TargetEntity
+				)
+			)
+			{
+				MRK_MarkerUIService.UpdateMarkerFriendlyColor(
+					taggedTarget
+				);
+
+				continue;
+			}
+
+			/*
+			* Enemy/other targets use normal AI
+			* alert coloring.
+			*/
+			alertState =
+				MRK_TargetStateService.GetTargetAlertState(
+					taggedTarget.m_TargetEntity
+				);
+
 			MRK_MarkerUIService.UpdateMarkerAlertColor(
-				taggedTarget
+				taggedTarget,
+				alertState
 			);
 		}
 	}
@@ -576,7 +779,151 @@ class MRK_TagManager
 
 		return false;
 	}
-	
+
+	protected bool IsWeaponADS()
+	{
+		IEntity player;
+		CharacterControllerComponent characterController;
+
+		player = GetGame().GetPlayerController().GetControlledEntity();
+
+		if (!player)
+		{
+			return false;
+		}
+
+		characterController = CharacterControllerComponent.Cast(
+			player.FindComponent(
+				CharacterControllerComponent
+			)
+		);
+
+		if (!characterController)
+		{
+			return false;
+		}
+
+		return characterController.IsWeaponADS();
+	}
+
+	protected CharacterWeaponManagerComponent GetWeaponManager()
+	{
+		IEntity player;
+		CharacterControllerComponent characterController;
+		BaseWeaponManagerComponent baseWeaponManager;
+		CharacterWeaponManagerComponent weaponManager;
+
+		player = GetGame().GetPlayerController().GetControlledEntity();
+
+		if (!player)
+		{
+			return null;
+		}
+
+		characterController = CharacterControllerComponent.Cast(
+			player.FindComponent(
+				CharacterControllerComponent
+			)
+		);
+
+		if (!characterController)
+		{
+			return null;
+		}
+
+		baseWeaponManager =
+			characterController.GetWeaponManagerComponent();
+
+		if (!baseWeaponManager)
+		{
+			return null;
+		}
+
+		weaponManager =
+			CharacterWeaponManagerComponent.Cast(
+				baseWeaponManager
+			);
+
+		return weaponManager;
+	}
+
+	protected BaseSightsComponent GetActiveSights()
+	{
+		CharacterWeaponManagerComponent weaponManager;
+		BaseWeaponComponent weapon;
+		BaseSightsComponent sights;
+
+		weaponManager = GetWeaponManager();
+
+		if (!weaponManager)
+		{
+			return null;
+		}
+
+		weapon = weaponManager.GetCurrentWeapon();
+
+		if (!weapon)
+		{
+			return null;
+		}
+
+		/*
+		* Check attached optic first.
+		*/
+		sights = weapon.GetAttachedSights();
+
+		if (sights && sights.IsSightADSActive())
+		{
+			return sights;
+		}
+
+		/*
+		* Then check the weapon's native sights.
+		*/
+		sights = weapon.GetSights();
+
+		if (sights && sights.IsSightADSActive())
+		{
+			return sights;
+		}
+
+		return null;
+	}
+
+	protected SCR_2DPIPSightsComponent GetActivePIPSights()
+	{
+		BaseSightsComponent sights;
+		SCR_2DPIPSightsComponent pipSights;
+
+		sights = GetActiveSights();
+
+		if (!sights)
+		{
+			return null;
+		}
+
+		pipSights = SCR_2DPIPSightsComponent.Cast(
+			sights
+		);
+
+		if (!pipSights)
+		{
+			return null;
+		}
+
+		if (!pipSights.IsPIPEnabled())
+		{
+			return null;
+		}
+
+		if (!pipSights.GetPIPCamera())
+		{
+			return null;
+		}
+
+		return pipSights;
+	}
+
 	protected bool IsUsingBinoculars()
 	{
 		IEntity player;
@@ -628,5 +975,164 @@ class MRK_TagManager
 		}
 
 		return true;
+	}
+
+	protected bool HandleAcquisitionLoss()
+	{
+		float deltaTime;
+
+		if (!m_CurrentAcquisitionTarget)
+		{
+			return false;
+		}
+
+		deltaTime =
+			MRK_BINOCULAR_RETICLE_UPDATE_MS / 1000.0;
+
+		m_AcquisitionLostTime =
+			m_AcquisitionLostTime + deltaTime;
+
+		if (m_AcquisitionLostTime >= MRK_ACQUISITION_GRACE_TIME)
+		{
+			ResetReticleProgress();
+			return false;
+		}
+
+		return true;
+	}
+
+	protected bool IsAcquisitionTargetNearReticle()
+	{
+		WorkspaceWidget workspace;
+		BaseWorld world;
+		IEntity target;
+
+		vector worldPosition;
+		vector screenPosition;
+
+		float screenCenterX;
+		float screenCenterY;
+
+		float deltaX;
+		float deltaY;
+
+		float distanceSquared;
+		float radiusSquared;
+
+		float markerHeight;
+
+		MRK_TagType tagType;
+
+		target = m_CurrentAcquisitionTarget;
+
+		if (!target)
+		{
+			return false;
+		}
+
+		workspace = GetGame().GetWorkspace();
+		world = GetGame().GetWorld();
+
+		if ((!workspace) || (!world))
+		{
+			return false;
+		}
+
+		tagType =
+			MRK_TargetClassifier.ClassifyTarget(
+				target
+			);
+
+		if (
+			tagType ==
+			MRK_TagType.MRK_TAG_UNKNOWN
+		)
+		{
+			return false;
+		}
+
+		worldPosition =
+			target.GetOrigin();
+
+		markerHeight =
+			MRK_TargetClassifier.GetMarkerHeightForEntity(
+				target,
+				tagType
+			);
+
+		worldPosition[1] =
+			worldPosition[1] +
+			markerHeight;
+
+		screenPosition =
+			workspace.ProjWorldToScreen(
+				worldPosition,
+				world
+			);
+
+		if (screenPosition[2] <= 0)
+		{
+			return false;
+		}
+
+		screenCenterX =
+			workspace.GetWidth() *
+			0.5;
+
+		screenCenterY =
+			workspace.GetHeight() *
+			0.5;
+
+		deltaX =
+			screenPosition[0] -
+			screenCenterX;
+
+		deltaY =
+			screenPosition[1] -
+			screenCenterY;
+
+		distanceSquared =
+			(deltaX * deltaX) +
+			(deltaY * deltaY);
+
+		radiusSquared =
+			MRK_ACQUISITION_SCREEN_RADIUS *
+			MRK_ACQUISITION_SCREEN_RADIUS;
+
+		return distanceSquared <= radiusSquared;
+	}
+
+	protected void HideAllTaggedMarkers()
+	{
+		MRK_TaggedTarget taggedTarget;
+
+		foreach (MRK_TaggedTarget target : m_TaggedTargets)
+		{
+			taggedTarget = target;
+
+			if (!taggedTarget)
+			{
+				continue;
+			}
+
+			if (!taggedTarget.m_MarkerRoot)
+			{
+				continue;
+			}
+
+			taggedTarget.m_MarkerRoot.SetVisible(false);
+		}
+	}
+
+	protected void PlayTagSound()
+	{
+		if (MRK_TAG_SOUND == ResourceName.Empty)
+		{
+			return;
+		}
+
+		AudioSystem.PlaySound(
+			MRK_TAG_SOUND
+		);
 	}
 }

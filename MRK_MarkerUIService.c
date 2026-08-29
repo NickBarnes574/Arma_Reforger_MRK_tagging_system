@@ -1,107 +1,134 @@
 class MRK_MarkerUIService
 {
-	static bool CreateMarker(
+	static MRK_TaggedTarget CreateMarker(
 		IEntity target,
-		MRK_TagType tagType,
-		out MRK_TaggedTarget taggedTarget
+		MRK_TagType tagType
 	)
 	{
+		WorkspaceWidget workspace;
 		Widget layoutRoot;
 		Widget markerRoot;
 		ImageWidget markerImage;
+		MRK_TaggedTarget taggedTarget;
 		ResourceName iconResource;
-
-		taggedTarget = null;
 
 		if (!target)
 		{
-			return false;
+			return null;
 		}
 
-		layoutRoot = GetGame().GetWorkspace().CreateWidgets(
-			MRK_UID + "UI/layouts/MRK_Marker.layout"
-		);
+		workspace = GetGame().GetWorkspace();
+
+		if (!workspace)
+		{
+			return null;
+		}
+
+		layoutRoot =
+			workspace.CreateWidgets(
+				MRK_MARKER_LAYOUT
+			);
 
 		if (!layoutRoot)
 		{
-			Print("MRK ERROR: Failed to create marker layout");
-			return false;
+			return null;
 		}
 
-		markerRoot = layoutRoot.FindAnyWidget(
-			"MarkerRoot"
-		);
+		/*
+		* Persistent target markers should sit below
+		* weapon optic UI.
+		*
+		* Do this ONCE when the widget is created.
+		*/
+		layoutRoot.SetZOrder(-100);
 
-		if (!markerRoot)
+		markerRoot =
+			layoutRoot.FindAnyWidget(
+				"MarkerRoot"
+			);
+
+		markerImage =
+			ImageWidget.Cast(
+				layoutRoot.FindAnyWidget(
+					"MarkerImage"
+				)
+			);
+
+		if ((!markerRoot) || (!markerImage))
 		{
-			Print("MRK ERROR: Could not find MarkerRoot");
-
 			layoutRoot.RemoveFromHierarchy();
-
-			return false;
+			return null;
 		}
 
-		FrameSlot.SetAlignment(
+		/*
+		* Infantry uses a smaller 32x32 marker.
+		* Everything else remains 64x64.
+		*/
+		float markerSize;
+
+		markerSize = GetMarkerSize(tagType);
+
+		FrameSlot.SetSize(
 			markerRoot,
-			0.0,
-			0.0
+			markerSize,
+			markerSize
 		);
-
-		markerImage = ImageWidget.Cast(
-			layoutRoot.FindAnyWidget("MarkerImage")
-		);
-
-		if (!markerImage)
-		{
-			Print("MRK ERROR: Could not find MarkerImage");
-
-			layoutRoot.RemoveFromHierarchy();
-
-			return false;
-		}
 
 		iconResource =
 			MRK_TargetClassifier.GetIconForTagType(
 				tagType
 			);
 
-		if (iconResource.IsEmpty())
+		if (iconResource != ResourceName.Empty)
 		{
-			Print("MRK ERROR: No icon for tag type");
-
-			layoutRoot.RemoveFromHierarchy();
-
-			return false;
-		}
-
-		if (!markerImage.LoadImageTexture(
-			0,
-			iconResource
-		))
-		{
-			PrintFormat(
-				"MRK ERROR: Failed to load marker icon: %1",
+			markerImage.LoadImageTexture(
+				0,
 				iconResource
 			);
 
-			layoutRoot.RemoveFromHierarchy();
-
-			return false;
+			markerImage.SetImage(0);
 		}
 
-		markerImage.SetImage(0);
-
-		taggedTarget = new MRK_TaggedTarget();
+		taggedTarget =
+			new MRK_TaggedTarget();
 
 		taggedTarget.m_TargetEntity = target;
 		taggedTarget.m_LayoutRoot = layoutRoot;
 		taggedTarget.m_MarkerRoot = markerRoot;
 		taggedTarget.m_MarkerImage = markerImage;
 		taggedTarget.m_TagType = tagType;
+
 		taggedTarget.m_LastAlertState =
 			MRK_AlertState.MRK_ALERT_IDLE;
 
-		return true;
+		if (
+			MRK_TargetStateService.IsFriendlyTarget(
+				target
+			)
+		)
+		{
+			markerImage.SetColor(
+				Color.FromRGBA(
+					80,
+					160,
+					255,
+					255
+				)
+			);
+		}
+		else
+		{
+			markerImage.SetColor(
+				Color.FromRGBA(
+					255,
+					255,
+					255,
+					255
+				)
+			);
+		}
+
+		return taggedTarget;
 	}
 
 	static bool UpdatePosition(
@@ -140,7 +167,8 @@ class MRK_MarkerUIService
 		worldPosition = target.GetOrigin();
 
 		markerHeight =
-			MRK_TargetClassifier.GetMarkerHeight(
+			MRK_TargetClassifier.GetMarkerHeightForEntity(
+				taggedTarget.m_TargetEntity,
 				taggedTarget.m_TagType
 			);
 
@@ -161,20 +189,209 @@ class MRK_MarkerUIService
 
 		markerRoot.SetVisible(true);
 
+		float markerHalfSize;
+
+		markerHalfSize =
+			GetMarkerHalfSize(
+				taggedTarget.m_TagType
+			);
+
 		FrameSlot.SetPos(
 			markerRoot,
-			screenPosition[0] - MRK_ICON_HALF_SIZE,
-			screenPosition[1] - MRK_ICON_HALF_SIZE
+			screenPosition[0] - markerHalfSize,
+			screenPosition[1] - markerHalfSize
+		);
+
+		return true;
+	}
+
+	static bool UpdatePositionWithCamera(
+		MRK_TaggedTarget taggedTarget,
+		int cameraIndex,
+		SCR_2DPIPSightsComponent pipSights
+	)
+	{
+		WorkspaceWidget workspace;
+		BaseWorld world;
+		IEntity player;
+		IEntity target;
+		Widget markerRoot;
+		SCR_CharacterControllerComponent characterController;
+		CharacterAimingComponent aimingComponent;
+
+		vector worldPosition;
+		vector projectedPosition;
+		vector aimRotationModification;
+		vector camTM[4];
+		vector markerTM[4];
+
+		float markerHeight;
+		float zoomCorrection;
+
+		if (!taggedTarget)
+		{
+			return false;
+		}
+
+		if (!pipSights)
+		{
+			return false;
+		}
+
+		workspace = GetGame().GetWorkspace();
+		world = GetGame().GetWorld();
+
+		if ((!workspace) || (!world))
+		{
+			return false;
+		}
+
+		target = taggedTarget.m_TargetEntity;
+		markerRoot = taggedTarget.m_MarkerRoot;
+
+		if ((!target) || (!markerRoot))
+		{
+			return false;
+		}
+
+		player = GetGame().GetPlayerController().GetControlledEntity();
+
+		if (!player)
+		{
+			return false;
+		}
+
+		characterController =
+			SCR_CharacterControllerComponent.Cast(
+				player.FindComponent(
+					SCR_CharacterControllerComponent
+				)
+			);
+
+		if (!characterController)
+		{
+			return false;
+		}
+
+		aimingComponent =
+			characterController.GetAimingComponent();
+
+		if (!aimingComponent)
+		{
+			return false;
+		}
+
+		worldPosition = target.GetOrigin();
+
+		markerHeight =
+			MRK_TargetClassifier.GetMarkerHeightForEntity(
+				taggedTarget.m_TargetEntity,
+				taggedTarget.m_TagType
+			);
+
+		worldPosition[1] =
+			worldPosition[1] + markerHeight;
+
+		/*
+		* Get the character's current weapon/sight
+		* aiming offset.
+		*/
+		aimRotationModification =
+			aimingComponent.GetAimingRotationModification();
+
+		/*
+		* Get the actual PIP camera transform.
+		*/
+		pipSights.GetPIPCamera().GetWorldTransform(
+			camTM
+		);
+
+		/*
+		* Build a transform whose position is the
+		* marker's world position.
+		*/
+		Math3D.MatrixIdentity4(
+			markerTM
+		);
+
+		markerTM[3] = worldPosition;
+
+		/*
+		* Bohemia applies the same correction to
+		* its own HUD nametags in PIP scopes.
+		*/
+		zoomCorrection =
+			pipSights.GetFOV() /
+			pipSights.GetMainCameraFOV();
+
+		SCR_Math3D.RotateAround(
+			markerTM,
+			camTM[3],
+			camTM[1],
+			aimRotationModification[0] *
+				zoomCorrection,
+			markerTM
+		);
+
+		SCR_Math3D.RotateAround(
+			markerTM,
+			camTM[3],
+			camTM[0],
+			-aimRotationModification[1] *
+				zoomCorrection,
+			markerTM
+		);
+
+		worldPosition = markerTM[3];
+
+		/*
+		* Now project through the actual PIP camera.
+		*/
+		projectedPosition =
+			workspace.ProjWorldToScreen(
+				worldPosition,
+				world,
+				cameraIndex
+			);
+
+		if (projectedPosition[2] <= 0)
+		{
+			markerRoot.SetVisible(false);
+			return true;
+		}
+
+		if (!pipSights.IsScreenPositionInSights(
+			projectedPosition
+		))
+		{
+			markerRoot.SetVisible(false);
+			return true;
+		}
+
+		markerRoot.SetVisible(true);
+
+		float markerHalfSize;
+
+		markerHalfSize =
+			GetMarkerHalfSize(
+				taggedTarget.m_TagType
+			);
+
+		FrameSlot.SetPos(
+			markerRoot,
+			projectedPosition[0] - markerHalfSize,
+			projectedPosition[1] - markerHalfSize
 		);
 
 		return true;
 	}
 
 	static void UpdateMarkerAlertColor(
-		MRK_TaggedTarget taggedTarget
+		MRK_TaggedTarget taggedTarget,
+		MRK_AlertState alertState
 	)
 	{
-		MRK_AlertState alertState;
+		Color markerColor;
 
 		if (!taggedTarget)
 		{
@@ -186,12 +403,11 @@ class MRK_MarkerUIService
 			return;
 		}
 
-		alertState =
-			MRK_TargetStateService.GetTargetAlertState(
-				taggedTarget.m_TargetEntity
-			);
-
-		if (alertState == taggedTarget.m_LastAlertState)
+		/*
+		* Avoid repeatedly changing the widget when
+		* nothing has changed.
+		*/
+		if (taggedTarget.m_LastAlertState == alertState)
 		{
 			return;
 		}
@@ -200,28 +416,26 @@ class MRK_MarkerUIService
 		{
 			case MRK_AlertState.MRK_ALERT_SEARCHING:
 			{
-				taggedTarget.m_MarkerImage.SetColor(
+				markerColor =
 					Color.FromRGBA(
-						255,
-						140,
-						0,
+						226,
+						167,
+						79,
 						255
-					)
-				);
+					);
 
 				break;
 			}
 
 			case MRK_AlertState.MRK_ALERT_COMBAT:
 			{
-				taggedTarget.m_MarkerImage.SetColor(
+				markerColor =
 					Color.FromRGBA(
 						255,
-						0,
-						0,
+						70,
+						70,
 						255
-					)
-				);
+					);
 
 				break;
 			}
@@ -229,20 +443,24 @@ class MRK_MarkerUIService
 			case MRK_AlertState.MRK_ALERT_IDLE:
 			default:
 			{
-				taggedTarget.m_MarkerImage.SetColor(
+				markerColor =
 					Color.FromRGBA(
 						255,
 						255,
 						255,
 						255
-					)
-				);
+					);
 
 				break;
 			}
 		}
 
-		taggedTarget.m_LastAlertState = alertState;
+		taggedTarget.m_MarkerImage.SetColor(
+			markerColor
+		);
+
+		taggedTarget.m_LastAlertState =
+			alertState;
 	}
 
 	static void DestroyMarker(
@@ -258,5 +476,47 @@ class MRK_MarkerUIService
 		{
 			taggedTarget.m_LayoutRoot.RemoveFromHierarchy();
 		}
+	}
+
+	static void UpdateMarkerFriendlyColor(
+		MRK_TaggedTarget taggedTarget
+	)
+	{
+		if (!taggedTarget)
+		{
+			return;
+		}
+
+		if (!taggedTarget.m_MarkerImage)
+		{
+			return;
+		}
+
+		taggedTarget.m_MarkerImage.SetColor(
+			Color.FromRGBA(
+				80,
+				160,
+				255,
+				255
+			)
+		);
+	}
+
+	static float GetMarkerSize(MRK_TagType tagType)
+	{
+		if (
+			tagType ==
+			MRK_TagType.MRK_TAG_INFANTRY
+		)
+		{
+			return MRK_INFANTRY_MARKER_SIZE;
+		}
+
+		return MRK_MARKER_SIZE;
+	}
+
+	static float GetMarkerHalfSize(MRK_TagType tagType)
+	{
+		return GetMarkerSize(tagType) * 0.5;
 	}
 }

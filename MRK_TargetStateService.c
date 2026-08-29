@@ -106,4 +106,67 @@ class MRK_TargetStateService
 
 		return damageManager.IsDestroyed();
 	}
+
+	static bool IsFriendlyTarget(IEntity target)
+	{
+		IEntity player;
+		FactionAffiliationComponent playerFactionComponent;
+		FactionAffiliationComponent targetFactionComponent;
+		Faction playerFaction;
+		Faction targetFaction;
+
+		if (!target)
+		{
+			return false;
+		}
+
+		player =
+			GetGame()
+				.GetPlayerController()
+				.GetControlledEntity();
+
+		if (!player)
+		{
+			return false;
+		}
+
+		playerFactionComponent =
+			FactionAffiliationComponent.Cast(
+				player.FindComponent(
+					FactionAffiliationComponent
+				)
+			);
+
+		if (!playerFactionComponent)
+		{
+			return false;
+		}
+
+		targetFactionComponent =
+			FactionAffiliationComponent.Cast(
+				target.FindComponent(
+					FactionAffiliationComponent
+				)
+			);
+
+		if (!targetFactionComponent)
+		{
+			return false;
+		}
+
+		playerFaction =
+			playerFactionComponent.GetAffiliatedFaction();
+
+		targetFaction =
+			targetFactionComponent.GetAffiliatedFaction();
+
+		if ((!playerFaction) || (!targetFaction))
+		{
+			return false;
+		}
+
+		return playerFaction.IsFactionFriendly(
+			targetFaction
+		);
+	}
 }
