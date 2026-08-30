@@ -40,7 +40,7 @@ class MRK_MarkerUIService
 		*
 		* Do this ONCE when the widget is created.
 		*/
-		layoutRoot.SetZOrder(-100);
+		layoutRoot.SetZOrder(0);
 
 		markerRoot =
 			layoutRoot.FindAnyWidget(

@@ -37,6 +37,7 @@ class MRK_TagManager
 			MRK_ALERT_UPDATE_MS,
 			true
 		);
+
 	}
 
 	protected bool IsTaggableTarget(IEntity target)
@@ -256,6 +257,8 @@ class MRK_TagManager
 		IEntity target;
 		float deltaTime;
 		float progress;
+		bool usingBinoculars;
+		bool usingVehicleObserver;
 
 		if (!m_BinocularReticleRoot)
 		{
@@ -266,10 +269,22 @@ class MRK_TagManager
 			MRK_BINOCULAR_RETICLE_UPDATE_MS /
 			1000.0;
 
+		usingBinoculars =
+			IsUsingBinoculars();
+
+		usingVehicleObserver =
+			IsUsingVehicleObserverView();
+
 		/*
-		* Binoculars not currently raised.
-		*/
-		if (!IsUsingBinoculars())
+		 * No valid tagging view is active.
+		 *
+		 * Hide the binocular UI and clear any
+		 * acquisition that was in progress.
+		 */
+		if (
+			!usingBinoculars &&
+			!usingVehicleObserver
+		)
 		{
 			m_BinocularADSTime = 0.0;
 
@@ -283,40 +298,66 @@ class MRK_TagManager
 		}
 
 		/*
-		* Binocular ADS starts before the raising
-		* animation visually finishes.
-		*
-		* Delay our custom reticle slightly.
-		*/
-		m_BinocularADSTime =
-			m_BinocularADSTime +
-			deltaTime;
-
-		if (
-			m_BinocularADSTime <
-			MRK_BINOCULAR_RETICLE_DELAY
-		)
+		 * The custom reticle belongs only to the
+		 * handheld binoculars.
+		 *
+		 * Vehicle observer/gunner sights keep their
+		 * native reticle; we only reuse the
+		 * acquisition/tagging logic.
+		 */
+		if (usingBinoculars)
 		{
+			m_BinocularADSTime =
+				m_BinocularADSTime +
+				deltaTime;
+
+			if (
+				m_BinocularADSTime <
+				MRK_BINOCULAR_RETICLE_DELAY
+			)
+			{
+				m_BinocularReticleRoot.SetVisible(
+					false
+				);
+
+				return;
+			}
+
+			m_BinocularReticleRoot.SetVisible(
+				true
+			);
+		}
+		else
+		{
+			m_BinocularADSTime = 0.0;
+
 			m_BinocularReticleRoot.SetVisible(
 				false
 			);
 
-			return;
+			if (m_BinocularReticleProgress)
+			{
+				m_BinocularReticleProgress.SetVisible(
+					false
+				);
+			}
 		}
 
-		m_BinocularReticleRoot.SetVisible(
-			true
-		);
-
+		/*
+		 * This trace uses the active player camera,
+		 * so the same path works for binoculars and
+		 * supported vehicle observer/gunner sights.
+		 */
 		target = GetBinocularTarget();
 
 		/*
-		* Exact ray missed.
-		*
-		* First see whether the target we were already
-		* acquiring is still close enough to the center
-		* of the screen to remain "sticky".
-		*/
+		 * Exact ray missed.
+		 *
+		 * Keep the current acquisition if the same
+		 * target is still close to the center of the
+		 * active view, then fall back to the short
+		 * acquisition grace period.
+		 */
 		if (!IsTaggableTarget(target))
 		{
 			if (IsAcquisitionTargetNearReticle())
@@ -326,16 +367,15 @@ class MRK_TagManager
 			}
 			else
 			{
-				/*
-				* Allow a brief miss before actually
-				* throwing away progress.
-				*/
 				if (HandleAcquisitionLoss())
 				{
 					return;
 				}
 
-				if (m_BinocularReticleImage)
+				if (
+					usingBinoculars &&
+					m_BinocularReticleImage
+				)
 				{
 					m_BinocularReticleImage.SetColor(
 						Color.FromRGBA(
@@ -351,18 +391,18 @@ class MRK_TagManager
 			}
 		}
 
-		/*
-		* We've got a valid target again, so it is no
-		* longer considered "lost".
-		*/
 		m_AcquisitionLostTime = 0.0;
 
 		/*
-		* Already tagged.
-		*/
+		 * Already-tagged targets remain non-acquirable.
+		 * Only binoculars need the gray visual feedback.
+		 */
 		if (IsAlreadyTagged(target))
 		{
-			if (m_BinocularReticleImage)
+			if (
+				usingBinoculars &&
+				m_BinocularReticleImage
+			)
 			{
 				m_BinocularReticleImage.SetColor(
 					Color.FromRGBA(
@@ -380,9 +420,12 @@ class MRK_TagManager
 		}
 
 		/*
-		* Valid new target: acquisition color.
-		*/
-		if (m_BinocularReticleImage)
+		 * Binocular-only acquisition visuals.
+		 */
+		if (
+			usingBinoculars &&
+			m_BinocularReticleImage
+		)
 		{
 			m_BinocularReticleImage.SetColor(
 				Color.FromRGBA(
@@ -394,7 +437,10 @@ class MRK_TagManager
 			);
 		}
 
-		if (m_BinocularReticleProgress)
+		if (
+			usingBinoculars &&
+			m_BinocularReticleProgress
+		)
 		{
 			m_BinocularReticleProgress.SetColor(
 				Color.FromRGBA(
@@ -407,8 +453,8 @@ class MRK_TagManager
 		}
 
 		/*
-		* New acquisition target.
-		*/
+		 * New acquisition target.
+		 */
 		if (
 			target !=
 			m_CurrentAcquisitionTarget
@@ -420,7 +466,10 @@ class MRK_TagManager
 			m_AcquisitionTime = 0.0;
 			m_AcquisitionLostTime = 0.0;
 
-			if (m_BinocularReticleProgress)
+			if (
+				usingBinoculars &&
+				m_BinocularReticleProgress
+			)
 			{
 				m_BinocularReticleProgress.SetMaskProgress(
 					0.0
@@ -435,8 +484,8 @@ class MRK_TagManager
 		}
 
 		/*
-		* Still acquiring the same target.
-		*/
+		 * Still acquiring the same target.
+		 */
 		m_AcquisitionTime =
 			m_AcquisitionTime +
 			deltaTime;
@@ -450,7 +499,10 @@ class MRK_TagManager
 			progress = 1.0;
 		}
 
-		if (m_BinocularReticleProgress)
+		if (
+			usingBinoculars &&
+			m_BinocularReticleProgress
+		)
 		{
 			m_BinocularReticleProgress.SetVisible(
 				true
@@ -1134,5 +1186,120 @@ class MRK_TagManager
 		AudioSystem.PlaySound(
 			MRK_TAG_SOUND
 		);
+	}
+
+
+
+
+	protected bool CanUseTaggingView()
+	{
+		if (IsUsingBinoculars())
+		{
+			return true;
+		}
+
+		if (IsUsingVehicleObserverView())
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	protected bool IsUsingVehicleObserverView()
+	{
+		IEntity player;
+		ChimeraCharacter character;
+		CompartmentAccessComponent compartmentAccess;
+		BaseCompartmentSlot compartment;
+		TurretCompartmentSlot turretCompartment;
+		TurretControllerComponent attachedTurret;
+		BaseSightsComponent currentSights;
+
+		player =
+			GetGame()
+				.GetPlayerController()
+				.GetControlledEntity();
+
+		if (!player)
+		{
+			return false;
+		}
+
+		character =
+			ChimeraCharacter.Cast(player);
+
+		if (!character)
+		{
+			return false;
+		}
+
+		compartmentAccess =
+			character.GetCompartmentAccessComponent();
+
+		if (!compartmentAccess)
+		{
+			return false;
+		}
+
+		if (!compartmentAccess.IsInCompartment())
+		{
+			return false;
+		}
+
+		compartment =
+			compartmentAccess.GetCompartment();
+
+		if (!compartment)
+		{
+			return false;
+		}
+
+		/*
+		 * Commander/observer-style seats.
+		 *
+		 * The LAV commander is a CargoCompartmentSlot,
+		 * but its compartment exposes an attached turret
+		 * with real sights. Requiring those sights to be
+		 * ADS means ordinary cargo seats do not qualify.
+		 */
+		attachedTurret =
+			compartment.GetAttachedTurret();
+
+		if (attachedTurret)
+		{
+			currentSights =
+				attachedTurret.GetCurrentSights();
+
+			if (
+				currentSights &&
+				attachedTurret.GetCurrentSightsADS()
+			)
+			{
+				return true;
+			}
+		}
+
+		/*
+		 * Gunner-style seats.
+		 *
+		 * LAV, Humvee, and helicopter door-gunner
+		 * TurretCompartmentSlots report their active
+		 * sight state through IsInCompartmentADS().
+		 */
+		turretCompartment =
+			TurretCompartmentSlot.Cast(
+				compartment
+			);
+
+		if (
+			turretCompartment &&
+			compartmentAccess.IsInCompartmentADS()
+		)
+		{
+			return true;
+		}
+
+		return false;
 	}
 }
