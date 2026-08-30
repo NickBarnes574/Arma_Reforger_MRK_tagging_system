@@ -214,6 +214,12 @@ class MRK_MarkerUIService
 
 		float markerHalfSize;
 
+		FrameSlot.SetSize(
+			markerRoot,
+			GetMarkerSize(taggedTarget.m_TagType),
+			GetMarkerSize(taggedTarget.m_TagType)
+		);
+
 		markerHalfSize =
 			GetMarkerHalfSize(
 				taggedTarget.m_TagType
@@ -275,6 +281,12 @@ class MRK_MarkerUIService
 		if ((!target) || (!markerRoot))
 		{
 			return false;
+		}
+
+		if (!MRK_Settings.ShowMarkersThroughOptics())
+		{
+			markerRoot.SetVisible(false);
+			return true;
 		}
 
 		player = GetGame().GetPlayerController().GetControlledEntity();
@@ -410,6 +422,12 @@ class MRK_MarkerUIService
 		);
 
 		float markerHalfSize;
+
+		FrameSlot.SetSize(
+			markerRoot,
+			GetMarkerSize(taggedTarget.m_TagType),
+			GetMarkerSize(taggedTarget.m_TagType)
+		);
 
 		markerHalfSize =
 			GetMarkerHalfSize(
@@ -583,6 +601,28 @@ class MRK_MarkerUIService
 			return false;
 		}
 
+		if (taggedTarget.m_IsFriendly)
+		{
+			if (!MRK_Settings.ShowFriendlyTags())
+			{
+				return false;
+			}
+		}
+		else if (taggedTarget.m_IsCivilian)
+		{
+			if (!MRK_Settings.ShowCivilianTags())
+			{
+				return false;
+			}
+		}
+		else
+		{
+			if (!MRK_Settings.ShowEnemyTags())
+			{
+				return false;
+			}
+		}
+
 		distance = vector.Distance(
 			viewer.GetOrigin(),
 			taggedTarget.m_TargetEntity.GetOrigin()
@@ -674,70 +714,118 @@ class MRK_MarkerUIService
 	)
 	{
 		float fadeStart;
+		float fadeMid;
+		float fadeFar;
 		float fadeEnd;
 		float minimumOpacity;
-		float fadeRange;
-		float fadeProgress;
-		float opacity;
+		float progress;
+
+		if (!MRK_Settings.DistanceFadingEnabled())
+		{
+			return 1.0;
+		}
 
 		fadeStart =
 			MRK_Settings.MarkerFadeStartDistance();
 
+		fadeMid =
+			MRK_Settings.MarkerFadeMidDistance();
+
+		fadeFar =
+			MRK_Settings.MarkerFadeFarDistance();
+
 		fadeEnd =
-			MRK_Settings.MarkerFadeEndDistance();
+			MRK_Settings.MaximumMarkerDisplayDistance();
 
 		minimumOpacity =
 			MRK_Settings.MarkerMinimumOpacity();
 
+		if (minimumOpacity < 0.0)
+		{
+			minimumOpacity = 0.0;
+		}
+
+		if (minimumOpacity > 1.0)
+		{
+			minimumOpacity = 1.0;
+		}
+
+		/*
+		 * Stronger, piecewise fade. This gives the eye three
+		 * clearly different distance bands instead of one shallow
+		 * linear fade across almost the entire tag range.
+		 *
+		 * close:  100%
+		 * mid:     60%
+		 * far:     15%
+		 * limit: minimum opacity (2% by default)
+		 */
 		if (distance <= fadeStart)
 		{
 			return 1.0;
 		}
 
-		if (distance >= fadeEnd)
+		if (distance < fadeMid)
 		{
-			return minimumOpacity;
+			if (fadeMid <= fadeStart)
+			{
+				return 0.60;
+			}
+
+			progress =
+				(distance - fadeStart) /
+				(fadeMid - fadeStart);
+
+			return 1.0 - (progress * 0.40);
 		}
 
-		fadeRange = fadeEnd - fadeStart;
-
-		if (fadeRange <= 0.0)
+		if (distance < fadeFar)
 		{
-			return minimumOpacity;
+			if (fadeFar <= fadeMid)
+			{
+				return 0.15;
+			}
+
+			progress =
+				(distance - fadeMid) /
+				(fadeFar - fadeMid);
+
+			return 0.60 - (progress * 0.45);
 		}
 
-		fadeProgress =
-			(distance - fadeStart) /
-			fadeRange;
-
-		opacity =
-			1.0 -
-			(fadeProgress * (1.0 - minimumOpacity));
-
-		if (opacity < minimumOpacity)
+		if (distance < fadeEnd)
 		{
-			opacity = minimumOpacity;
+			if (fadeEnd <= fadeFar)
+			{
+				return minimumOpacity;
+			}
+
+			progress =
+				(distance - fadeFar) /
+				(fadeEnd - fadeFar);
+
+			return 0.15 -
+				(progress * (0.15 - minimumOpacity));
 		}
 
-		if (opacity > 1.0)
-		{
-			opacity = 1.0;
-		}
-
-		return opacity;
+		return minimumOpacity;
 	}
 
 	static float GetMarkerSize(MRK_TagType tagType)
 	{
+		float baseSize;
+
+		baseSize = MRK_MARKER_SIZE;
+
 		if (
 			tagType ==
 			MRK_TagType.MRK_TAG_INFANTRY
 		)
 		{
-			return MRK_INFANTRY_MARKER_SIZE;
+			baseSize = MRK_INFANTRY_MARKER_SIZE;
 		}
 
-		return MRK_MARKER_SIZE;
+		return baseSize * MRK_Settings.MarkerScale();
 	}
 
 	static float GetMarkerHalfSize(MRK_TagType tagType)

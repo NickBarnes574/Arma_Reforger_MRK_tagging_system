@@ -18,6 +18,8 @@ class MRK_TagManager
 	{
 		Print("MRK: Tagging system initialized");
 
+		MRK_Settings.Init();
+
 		CreateBinocularReticle();
 
 		GetGame().GetCallqueue().CallLater(
@@ -492,7 +494,7 @@ class MRK_TagManager
 
 		progress =
 			m_AcquisitionTime /
-			MRK_TAG_ACQUISITION_TIME;
+			MRK_Settings.TagAcquisitionTime();
 
 		if (progress > 1.0)
 		{
@@ -515,7 +517,7 @@ class MRK_TagManager
 
 		if (
 			m_AcquisitionTime >=
-			MRK_TAG_ACQUISITION_TIME
+			MRK_Settings.TagAcquisitionTime()
 		)
 		{
 			TagEntity(target);
@@ -1177,7 +1179,7 @@ class MRK_TagManager
 		m_AcquisitionLostTime =
 			m_AcquisitionLostTime + deltaTime;
 
-		if (m_AcquisitionLostTime >= MRK_ACQUISITION_GRACE_TIME)
+		if (m_AcquisitionLostTime >= MRK_Settings.AcquisitionGraceTime())
 		{
 			ResetReticleProgress();
 			return false;
@@ -1281,8 +1283,8 @@ class MRK_TagManager
 			(deltaY * deltaY);
 
 		radiusSquared =
-			MRK_ACQUISITION_SCREEN_RADIUS *
-			MRK_ACQUISITION_SCREEN_RADIUS;
+			MRK_Settings.AcquisitionScreenRadius() *
+			MRK_Settings.AcquisitionScreenRadius();
 
 		return distanceSquared <= radiusSquared;
 	}
@@ -1311,6 +1313,11 @@ class MRK_TagManager
 
 	protected void PlayTagSound()
 	{
+		if (!MRK_Settings.TagConfirmationSoundEnabled())
+		{
+			return;
+		}
+
 		if (MRK_TAG_SOUND == ResourceName.Empty)
 		{
 			return;
