@@ -207,6 +207,11 @@ class MRK_MarkerUIService
 
 		markerRoot.SetVisible(true);
 
+		ApplyDistanceOpacity(
+			taggedTarget,
+			player
+		);
+
 		float markerHalfSize;
 
 		markerHalfSize =
@@ -399,6 +404,11 @@ class MRK_MarkerUIService
 
 		markerRoot.SetVisible(true);
 
+		ApplyDistanceOpacity(
+			taggedTarget,
+			player
+		);
+
 		float markerHalfSize;
 
 		markerHalfSize =
@@ -573,6 +583,24 @@ class MRK_MarkerUIService
 			return false;
 		}
 
+		distance = vector.Distance(
+			viewer.GetOrigin(),
+			taggedTarget.m_TargetEntity.GetOrigin()
+		);
+
+		/*
+		 * Keep very distant tags in the logical tag list, but stop
+		 * drawing them on the HUD. If the target comes back into
+		 * range, its marker automatically becomes visible again.
+		 */
+		if (
+			distance >
+			MRK_Settings.MaximumMarkerDisplayDistance()
+		)
+		{
+			return false;
+		}
+
 		isVehicle =
 			taggedTarget.m_TagType !=
 			MRK_TagType.MRK_TAG_INFANTRY;
@@ -592,11 +620,6 @@ class MRK_MarkerUIService
 				return false;
 			}
 
-			distance = vector.Distance(
-				viewer.GetOrigin(),
-				taggedTarget.m_TargetEntity.GetOrigin()
-			);
-
 			if (
 				distance >
 				MRK_Settings.UnoccupiedVehicleDisplayDistance()
@@ -607,6 +630,101 @@ class MRK_MarkerUIService
 		}
 
 		return true;
+	}
+
+	protected static void ApplyDistanceOpacity(
+		MRK_TaggedTarget taggedTarget,
+		IEntity viewer
+	)
+	{
+		float distance;
+		float opacity;
+
+		if ((!taggedTarget) || (!viewer))
+		{
+			return;
+		}
+
+		if ((!taggedTarget.m_TargetEntity) || (!taggedTarget.m_MarkerRoot))
+		{
+			return;
+		}
+
+		distance = vector.Distance(
+			viewer.GetOrigin(),
+			taggedTarget.m_TargetEntity.GetOrigin()
+		);
+
+		opacity = GetMarkerOpacityForDistance(
+			distance
+		);
+
+		/*
+		 * Apply opacity to MarkerRoot rather than MarkerImage so alert
+		 * colors (white/orange/red/blue) remain completely independent
+		 * from distance fading.
+		 */
+		taggedTarget.m_MarkerRoot.SetOpacity(
+			opacity
+		);
+	}
+
+	protected static float GetMarkerOpacityForDistance(
+		float distance
+	)
+	{
+		float fadeStart;
+		float fadeEnd;
+		float minimumOpacity;
+		float fadeRange;
+		float fadeProgress;
+		float opacity;
+
+		fadeStart =
+			MRK_Settings.MarkerFadeStartDistance();
+
+		fadeEnd =
+			MRK_Settings.MarkerFadeEndDistance();
+
+		minimumOpacity =
+			MRK_Settings.MarkerMinimumOpacity();
+
+		if (distance <= fadeStart)
+		{
+			return 1.0;
+		}
+
+		if (distance >= fadeEnd)
+		{
+			return minimumOpacity;
+		}
+
+		fadeRange = fadeEnd - fadeStart;
+
+		if (fadeRange <= 0.0)
+		{
+			return minimumOpacity;
+		}
+
+		fadeProgress =
+			(distance - fadeStart) /
+			fadeRange;
+
+		opacity =
+			1.0 -
+			(fadeProgress * (1.0 - minimumOpacity));
+
+		if (opacity < minimumOpacity)
+		{
+			opacity = minimumOpacity;
+		}
+
+		if (opacity > 1.0)
+		{
+			opacity = 1.0;
+		}
+
+		return opacity;
 	}
 
 	static float GetMarkerSize(MRK_TagType tagType)

@@ -42,3 +42,8 @@ The current default HUD policy is centralized through `MRK_Settings.c`:
 - Civilian/neutral targets stay white and do not use hostile AI alert-state colors.
 
 `MRK_Settings.c` is intentionally kept separate so these values can later be connected to player-facing menu options without rewriting the tag lifecycle logic.
+
+
+## Distance-based marker fading
+
+HUD markers now stay fully opaque through 300 m, fade smoothly to 35% opacity by 1200 m, and remain at 35% until the global 1500 m HUD display cutoff. Tags remain logically persistent when hidden by distance, so they reappear if the target returns to display range. Unoccupied vehicles still use their stricter 750 m display limit.
