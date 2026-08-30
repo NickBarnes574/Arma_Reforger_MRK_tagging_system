@@ -137,6 +137,7 @@ class MRK_MarkerUIService
 	{
 		WorkspaceWidget workspace;
 		BaseWorld world;
+		IEntity player;
 		IEntity target;
 		Widget markerRoot;
 		vector worldPosition;
@@ -162,6 +163,23 @@ class MRK_MarkerUIService
 		if ((!target) || (!markerRoot))
 		{
 			return false;
+		}
+
+		player =
+			GetGame()
+				.GetPlayerController()
+				.GetControlledEntity();
+
+		if (
+			player &&
+			!ShouldDisplayMarker(
+				taggedTarget,
+				player
+			)
+		)
+		{
+			markerRoot.SetVisible(false);
+			return true;
 		}
 
 		worldPosition = target.GetOrigin();
@@ -259,6 +277,17 @@ class MRK_MarkerUIService
 		if (!player)
 		{
 			return false;
+		}
+
+		if (
+			!ShouldDisplayMarker(
+				taggedTarget,
+				player
+			)
+		)
+		{
+			markerRoot.SetVisible(false);
+			return true;
 		}
 
 		characterController =
@@ -463,6 +492,30 @@ class MRK_MarkerUIService
 			alertState;
 	}
 
+	static void UpdateMarkerCivilianColor(
+		MRK_TaggedTarget taggedTarget
+	)
+	{
+		if (!taggedTarget)
+		{
+			return;
+		}
+
+		if (!taggedTarget.m_MarkerImage)
+		{
+			return;
+		}
+
+		taggedTarget.m_MarkerImage.SetColor(
+			Color.FromRGBA(
+				255,
+				255,
+				255,
+				255
+			)
+		);
+	}
+
 	static void DestroyMarker(
 		MRK_TaggedTarget taggedTarget
 	)
@@ -500,6 +553,60 @@ class MRK_MarkerUIService
 				255
 			)
 		);
+	}
+
+	protected static bool ShouldDisplayMarker(
+		MRK_TaggedTarget taggedTarget,
+		IEntity viewer
+	)
+	{
+		float distance;
+		bool isVehicle;
+
+		if ((!taggedTarget) || (!viewer))
+		{
+			return false;
+		}
+
+		if (!taggedTarget.m_TargetEntity)
+		{
+			return false;
+		}
+
+		isVehicle =
+			taggedTarget.m_TagType !=
+			MRK_TagType.MRK_TAG_INFANTRY;
+
+		/*
+		 * Empty vehicles stay logically tagged so the player cannot
+		 * immediately retag them, but they stop consuming HUD space
+		 * once they are outside the configured display distance.
+		 */
+		if (
+			isVehicle &&
+			!taggedTarget.m_IsOccupied
+		)
+		{
+			if (!MRK_Settings.ShowUnoccupiedVehicleTags())
+			{
+				return false;
+			}
+
+			distance = vector.Distance(
+				viewer.GetOrigin(),
+				taggedTarget.m_TargetEntity.GetOrigin()
+			);
+
+			if (
+				distance >
+				MRK_Settings.UnoccupiedVehicleDisplayDistance()
+			)
+			{
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	static float GetMarkerSize(MRK_TagType tagType)

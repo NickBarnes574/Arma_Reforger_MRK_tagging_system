@@ -575,6 +575,10 @@ class MRK_TagManager
 			return;
 		}
 
+		ConfigureTagBehavior(
+			taggedTarget
+		);
+
 		m_TaggedTargets.Insert(taggedTarget);
 
 		/*
@@ -588,6 +592,100 @@ class MRK_TagManager
 			tagType,
 			m_TaggedTargets.Count()
 		);
+	}
+
+	protected void ConfigureTagBehavior(
+		MRK_TaggedTarget taggedTarget
+	)
+	{
+		bool isVehicle;
+
+		if (!taggedTarget)
+		{
+			return;
+		}
+
+		if (!taggedTarget.m_TargetEntity)
+		{
+			return;
+		}
+
+		isVehicle =
+			taggedTarget.m_TagType !=
+			MRK_TagType.MRK_TAG_INFANTRY;
+
+		taggedTarget.m_IsFriendly =
+			MRK_TargetStateService.IsFriendlyTarget(
+				taggedTarget.m_TargetEntity
+			);
+
+		taggedTarget.m_IsCivilian =
+			MRK_TargetStateService.IsCivilianTarget(
+				taggedTarget.m_TargetEntity
+			);
+
+		/*
+		 * Infantry is considered occupied by definition.
+		 * Vehicle targets query their compartment slots.
+		 */
+		if (isVehicle)
+		{
+			taggedTarget.m_IsOccupied =
+				MRK_TargetStateService.IsVehicleOccupied(
+					taggedTarget.m_TargetEntity
+				);
+		}
+		else
+		{
+			taggedTarget.m_IsOccupied = true;
+		}
+
+		taggedTarget.m_TimeAlive = 0.0;
+		taggedTarget.m_Lifetime = 0.0;
+		taggedTarget.m_IsPersistent = true;
+
+		/*
+		 * Empty vehicles remain logically tagged, but their HUD
+		 * marker is distance-limited by MRK_MarkerUIService.
+		 */
+		if (
+			isVehicle &&
+			!taggedTarget.m_IsOccupied
+		)
+		{
+			return;
+		}
+
+		/*
+		 * Friendly targets are useful for quick identification,
+		 * but they do not need to occupy HUD space indefinitely.
+		 */
+		if (taggedTarget.m_IsFriendly)
+		{
+			taggedTarget.m_IsPersistent = false;
+			taggedTarget.m_Lifetime =
+				MRK_Settings.FriendlyTagLifetime();
+
+			return;
+		}
+
+		/*
+		 * Neutral/civilian targets are even more temporary.
+		 */
+		if (taggedTarget.m_IsCivilian)
+		{
+			taggedTarget.m_IsPersistent = false;
+			taggedTarget.m_Lifetime =
+				MRK_Settings.CivilianTagLifetime();
+
+			return;
+		}
+
+		/*
+		 * Enemy infantry and occupied enemy vehicles stay tagged
+		 * until the target is dead/destroyed.
+		 */
+		taggedTarget.m_IsPersistent = true;
 	}
 
 	protected void UpdateTaggedMarkers()
@@ -677,6 +775,32 @@ class MRK_TagManager
 				);
 
 				continue;
+			}
+
+			/*
+			 * Temporary tags age out automatically.
+			 */
+			if (!taggedTarget.m_IsPersistent)
+			{
+				taggedTarget.m_TimeAlive =
+					taggedTarget.m_TimeAlive +
+					deltaTime;
+
+				if (
+					taggedTarget.m_TimeAlive >=
+					taggedTarget.m_Lifetime
+				)
+				{
+					MRK_MarkerUIService.DestroyMarker(
+						taggedTarget
+					);
+
+					m_TaggedTargets.RemoveOrdered(
+						idx
+					);
+
+					continue;
+				}
 			}
 
 			/*
@@ -776,13 +900,22 @@ class MRK_TagManager
 			* We intentionally do not ask for their
 			* alert state.
 			*/
-			if (
-				MRK_TargetStateService.IsFriendlyTarget(
-					taggedTarget.m_TargetEntity
-				)
-			)
+			if (taggedTarget.m_IsFriendly)
 			{
 				MRK_MarkerUIService.UpdateMarkerFriendlyColor(
+					taggedTarget
+				);
+
+				continue;
+			}
+
+			/*
+			 * Civilians/neutrals stay white and do not use enemy
+			 * alert-state colors.
+			 */
+			if (taggedTarget.m_IsCivilian)
+			{
+				MRK_MarkerUIService.UpdateMarkerCivilianColor(
 					taggedTarget
 				);
 

@@ -169,4 +169,118 @@ class MRK_TargetStateService
 			targetFaction
 		);
 	}
+	static bool IsCivilianTarget(IEntity target)
+	{
+		IEntity player;
+		FactionAffiliationComponent playerFactionComponent;
+		FactionAffiliationComponent targetFactionComponent;
+		Faction playerFaction;
+		Faction targetFaction;
+
+		if (!target)
+		{
+			return false;
+		}
+
+		player =
+			GetGame()
+				.GetPlayerController()
+				.GetControlledEntity();
+
+		if (!player)
+		{
+			return false;
+		}
+
+		playerFactionComponent =
+			FactionAffiliationComponent.Cast(
+				player.FindComponent(
+					FactionAffiliationComponent
+				)
+			);
+
+		targetFactionComponent =
+			FactionAffiliationComponent.Cast(
+				target.FindComponent(
+					FactionAffiliationComponent
+				)
+			);
+
+		if ((!playerFactionComponent) || (!targetFactionComponent))
+		{
+			return false;
+		}
+
+		playerFaction =
+			playerFactionComponent.GetAffiliatedFaction();
+
+		targetFaction =
+			targetFactionComponent.GetAffiliatedFaction();
+
+		if ((!playerFaction) || (!targetFaction))
+		{
+			return false;
+		}
+
+		/*
+		 * Treat a faction that is neither friendly nor hostile
+		 * toward the local player as civilian/neutral. This keeps
+		 * the rule capability/faction based instead of depending on
+		 * a hardcoded civilian faction key.
+		 */
+		if (playerFaction.IsFactionFriendly(targetFaction))
+		{
+			return false;
+		}
+
+		if (playerFaction.IsFactionEnemy(targetFaction))
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	static bool IsVehicleOccupied(IEntity target)
+	{
+		BaseCompartmentManagerComponent compartmentManager;
+		array<BaseCompartmentSlot> compartments = {};
+
+		if (!target)
+		{
+			return false;
+		}
+
+		compartmentManager =
+			BaseCompartmentManagerComponent.Cast(
+				target.FindComponent(
+					BaseCompartmentManagerComponent
+				)
+			);
+
+		if (!compartmentManager)
+		{
+			return false;
+		}
+
+		compartmentManager.GetCompartments(
+			compartments
+		);
+
+		foreach (BaseCompartmentSlot compartment : compartments)
+		{
+			if (!compartment)
+			{
+				continue;
+			}
+
+			if (compartment.IsOccupied())
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 }
